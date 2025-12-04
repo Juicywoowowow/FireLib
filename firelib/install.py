@@ -96,9 +96,9 @@ class FirelibInstaller:
         """Compile C/C++ components"""
         print("[*] Compiling core components...")
         if os.path.exists('Makefile'):
-            result = subprocess.run(['make', 'clean'])
-            result = subprocess.run(['make'])
-            if result.returncode == 0:
+            subprocess.call(['make', 'clean'])
+            result = subprocess.call(['make'])
+            if result == 0:
                 print("[+] Compilation successful")
                 return True
             else:
@@ -135,8 +135,8 @@ class FirelibInstaller:
         print("[*] Installing Python package...")
         if os.path.exists('src/python/firelib'):
             cmd = [self.python_cmd, '-m', 'pip', 'install', '-e', '.']
-            result = subprocess.run(cmd)
-            if result.returncode == 0:
+            result = subprocess.call(cmd)
+            if result == 0:
                 print("[+] Python package installed")
                 return True
         return True
