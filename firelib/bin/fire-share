@@ -1,0 +1,67 @@
+#!/usr/bin/env python3
+"""
+fire-share - Quick file sharing over local network
+"""
+
+import sys
+import os
+import argparse
+import socket
+import http.server
+import socketserver
+from urllib.parse import quote
+
+class ShareHandler(http.server.SimpleHTTPRequestHandler):
+    def __init__(self, *args, directory=None, **kwargs):
+        self.share_file = directory
+        super().__init__(*args, directory=os.path.dirname(directory) if directory else None, **kwargs)
+    
+    def list_directory(self, path):
+        if self.share_file and os.path.isfile(self.share_file):
+            # Serve single file
+            return super().list_directory(path)
+        return super().list_directory(path)
+
+def get_local_ip():
+    """Get local IP address"""
+    try:
+        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        s.connect(("8.8.8.8", 80))
+        ip = s.getsockname()[0]
+        s.close()
+        return ip
+    except:
+        return "127.0.0.1"
+
+def main():
+    parser = argparse.ArgumentParser(description='Share files over local network')
+    parser.add_argument('file', nargs='?', default='.', help='File or directory to share')
+    parser.add_argument('-p', '--port', type=int, default=8080, help='Port to serve on')
+    args = parser.parse_args()
+    
+    if not os.path.exists(args.file):
+        print(f"[!] File not found: {args.file}")
+        sys.exit(1)
+    
+    abs_path = os.path.abspath(args.file)
+    local_ip = get_local_ip()
+    
+    print("=" * 50)
+    print("Firelib File Share")
+    print("=" * 50)
+    print(f"[*] Sharing: {abs_path}")
+    print(f"[*] Local:   http://localhost:{args.port}")
+    print(f"[*] Network: http://{local_ip}:{args.port}")
+    print("[*] Press Ctrl+C to stop")
+    print("=" * 50)
+    
+    os.chdir(os.path.dirname(abs_path) if os.path.isfile(abs_path) else abs_path)
+    
+    with socketserver.TCPServer(("", args.port), http.server.SimpleHTTPRequestHandler) as httpd:
+        try:
+            httpd.serve_forever()
+        except KeyboardInterrupt:
+            print("\n[*] Sharing stopped")
+
+if __name__ == '__main__':
+    main()

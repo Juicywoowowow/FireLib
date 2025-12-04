@@ -1,0 +1,84 @@
+#!/usr/bin/env python3
+"""
+fire-monitor - System resource monitor
+"""
+
+import sys
+import os
+import time
+import argparse
+
+def get_cpu_usage():
+    """Get CPU usage percentage"""
+    try:
+        with open('/proc/stat', 'r') as f:
+            line = f.readline()
+            values = [int(x) for x in line.split()[1:]]
+            total = sum(values)
+            idle = values[3]
+            return total, idle
+    except:
+        return 0, 0
+
+def get_memory_info():
+    """Get memory information"""
+    mem_info = {}
+    try:
+        with open('/proc/meminfo', 'r') as f:
+            for line in f:
+                parts = line.split(':')
+                if len(parts) == 2:
+                    key = parts[0].strip()
+                    value = int(parts[1].strip().split()[0])
+                    mem_info[key] = value
+    except:
+        pass
+    return mem_info
+
+def format_bytes(kb):
+    """Format KB to human readable"""
+    mb = kb / 1024
+    gb = mb / 1024
+    if gb >= 1:
+        return f"{gb:.2f} GB"
+    return f"{mb:.2f} MB"
+
+def main():
+    parser = argparse.ArgumentParser(description='System resource monitor')
+    parser.add_argument('-i', '--interval', type=int, default=2, help='Update interval in seconds')
+    parser.add_argument('-c', '--count', type=int, default=0, help='Number of updates (0 = infinite)')
+    args = parser.parse_args()
+    
+    print("Firelib System Monitor")
+    print("=" * 50)
+    
+    prev_total, prev_idle = get_cpu_usage()
+    time.sleep(0.1)
+    
+    count = 0
+    try:
+        while args.count == 0 or count < args.count:
+            # CPU
+            total, idle = get_cpu_usage()
+            total_diff = total - prev_total
+            idle_diff = idle - prev_idle
+            cpu_usage = 100.0 * (1.0 - idle_diff / total_diff) if total_diff > 0 else 0
+            prev_total, prev_idle = total, idle
+            
+            # Memory
+            mem = get_memory_info()
+            mem_total = mem.get('MemTotal', 0)
+            mem_free = mem.get('MemFree', 0) + mem.get('Buffers', 0) + mem.get('Cached', 0)
+            mem_used = mem_total - mem_free
+            mem_percent = (mem_used / mem_total * 100) if mem_total > 0 else 0
+            
+            # Display
+            print(f"\rCPU: {cpu_usage:5.1f}% | Memory: {format_bytes(mem_used)}/{format_bytes(mem_total)} ({mem_percent:.1f}%)", end='', flush=True)
+            
+            time.sleep(args.interval)
+            count += 1
+    except KeyboardInterrupt:
+        print("\n[*] Monitor stopped")
+
+if __name__ == '__main__':
+    main()
