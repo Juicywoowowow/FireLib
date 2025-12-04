@@ -8,6 +8,22 @@ import sys
 import subprocess
 import shutil
 
+def which(program):
+    """Python 2 compatible which"""
+    def is_exe(fpath):
+        return os.path.isfile(fpath) and os.access(fpath, os.X_OK)
+    
+    fpath, fname = os.path.split(program)
+    if fpath:
+        if is_exe(program):
+            return program
+    else:
+        for path in os.environ["PATH"].split(os.pathsep):
+            exe_file = os.path.join(path, program)
+            if is_exe(exe_file):
+                return exe_file
+    return None
+
 class FirelibInstaller:
     def __init__(self):
         self.python_cmd = None
@@ -20,11 +36,13 @@ class FirelibInstaller:
         """Detect available Python interpreter"""
         print("[*] Detecting Python...")
         for cmd in ['python3', 'python', 'python2']:
-            if shutil.which(cmd):
+            if which(cmd):
                 try:
-                    result = subprocess.run([cmd, '--version'], 
-                                          capture_output=True, text=True)
-                    version_str = result.stdout + result.stderr
+                    proc = subprocess.Popen([cmd, '--version'], 
+                                          stdout=subprocess.PIPE, 
+                                          stderr=subprocess.PIPE)
+                    stdout, stderr = proc.communicate()
+                    version_str = stdout.decode() + stderr.decode()
                     self.python_cmd = cmd
                     self.python_version = version_str.strip()
                     print("[+] Found: " + self.python_version)
@@ -50,13 +68,13 @@ class FirelibInstaller:
         missing = []
         
         for pkg in required:
-            if not shutil.which(pkg):
+            if not which(pkg):
                 missing.append(pkg)
         
         if missing:
             print("[*] Installing missing packages: " + ', '.join(missing))
             cmd = ['pkg', 'install', '-y'] + missing
-            subprocess.run(cmd)
+            subprocess.call(cmd)
         else:
             print("[+] All dependencies satisfied")
     
