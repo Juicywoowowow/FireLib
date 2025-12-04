@@ -28,7 +28,7 @@ class FirelibInstaller:
                     version_str = result.stdout + result.stderr
                     self.python_cmd = cmd
                     self.python_version = version_str.strip()
-                    print(f"[+] Found: {self.python_version}")
+                    print("[+] Found: " + self.python_version)
                     return True
                 except:
                     continue
@@ -41,7 +41,7 @@ class FirelibInstaller:
         if not os.path.exists(self.prefix):
             print("[!] Not running in Termux!")
             return False
-        print(f"[+] Termux detected: {self.prefix}")
+        print("[+] Termux detected: " + self.prefix)
         return True
     
     def install_dependencies(self):
@@ -55,7 +55,7 @@ class FirelibInstaller:
                 missing.append(pkg)
         
         if missing:
-            print(f"[*] Installing missing packages: {', '.join(missing)}")
+            print("[*] Installing missing packages: " + ', '.join(missing))
             cmd = ['pkg', 'install', '-y'] + missing
             subprocess.run(cmd)
         else:
@@ -71,8 +71,9 @@ class FirelibInstaller:
             os.path.join(self.firelib_home, 'logs')
         ]
         for d in dirs:
-            os.makedirs(d, exist_ok=True)
-        print(f"[+] Created {self.firelib_home}")
+            if not os.path.exists(d):
+                os.makedirs(d)
+        print("[+] Created " + self.firelib_home)
     
     def compile_core(self):
         """Compile C/C++ components"""
@@ -109,7 +110,7 @@ class FirelibInstaller:
                 os.chmod(dst, 0o755)
                 installed += 1
         
-        print(f"[+] Installed {installed} commands")
+        print("[+] Installed " + str(installed) + " commands")
         return True
     
     def install_python_package(self):
