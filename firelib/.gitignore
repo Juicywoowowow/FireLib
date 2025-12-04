@@ -1,0 +1,16 @@
+*.o
+*.so
+*.pyc
+__pycache__/
+*.egg-info/
+dist/
+build/
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+bin/fire-*
+!bin/*.py
+test_output/
