@@ -1,26 +1,19 @@
 #!/usr/bin/env python3
 """
-fire-share - Quick file sharing over local network
+fire-share - Quick file sharing over local network with web UI
 """
 
 import sys
 import os
 import argparse
 import socket
-import http.server
-import socketserver
-from urllib.parse import quote
+import json
+import time
+from http.server import HTTPServer, BaseHTTPRequestHandler
+from urllib.parse import unquote, quote
+from datetime import datetime
 
-class ShareHandler(http.server.SimpleHTTPRequestHandler):
-    def __init__(self, *args, directory=None, **kwargs):
-        self.share_file = directory
-        super().__init__(*args, directory=os.path.dirname(directory) if directory else None, **kwargs)
-    
-    def list_directory(self, path):
-        if self.share_file and os.path.isfile(self.share_file):
-            # Serve single file
-            return super().list_directory(path)
-        return super().list_directory(path)
+DB_PATH = os.path.expanduser("~/.firelib/data/db.json")
 
 def get_local_ip():
     """Get local IP address"""
@@ -33,35 +26,253 @@ def get_local_ip():
     except:
         return "127.0.0.1"
 
+def load_db():
+    """Load shared files database"""
+    if os.path.exists(DB_PATH):
+        with open(DB_PATH, 'r') as f:
+            return json.load(f)
+    return {"files": [], "started": time.time()}
+
+def save_db(data):
+    """Save shared files database"""
+    os.makedirs(os.path.dirname(DB_PATH), exist_ok=True)
+    with open(DB_PATH, 'w') as f:
+        json.dump(data, f, indent=2)
+
+def format_size(size):
+    """Format bytes to human readable"""
+    for unit in ['B', 'KB', 'MB', 'GB']:
+        if size < 1024.0:
+            return f"{size:.2f} {unit}"
+        size /= 1024.0
+    return f"{size:.2f} TB"
+
+class ShareHandler(BaseHTTPRequestHandler):
+    shared_files = {}
+    
+    def do_GET(self):
+        path = unquote(self.path)
+        
+        if path == '/' or path == '/index.html':
+            self.serve_index()
+        elif path == '/api/files':
+            self.serve_api_files()
+        elif path.startswith('/download/'):
+            filename = path[10:]
+            self.serve_download(filename)
+        else:
+            self.send_error(404)
+    
+    def serve_index(self):
+        """Serve the web UI"""
+        html = """<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Firelib Share</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { 
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+            background: #0a0a0a; color: #fff; padding: 20px;
+        }
+        .container { max-width: 1200px; margin: 0 auto; }
+        h1 { color: #ff6b35; margin-bottom: 10px; font-size: 2em; }
+        .subtitle { color: #888; margin-bottom: 30px; }
+        .files { display: grid; gap: 15px; }
+        .file-card {
+            background: #1a1a1a; border: 1px solid #333;
+            border-radius: 8px; padding: 20px;
+            transition: all 0.3s;
+        }
+        .file-card:hover { border-color: #ff6b35; transform: translateY(-2px); }
+        .file-name { font-size: 1.2em; color: #fff; margin-bottom: 8px; }
+        .file-info { color: #888; font-size: 0.9em; margin-bottom: 15px; }
+        .download-btn {
+            background: #ff6b35; color: #fff; border: none;
+            padding: 10px 20px; border-radius: 5px;
+            cursor: pointer; font-size: 1em; text-decoration: none;
+            display: inline-block;
+        }
+        .download-btn:hover { background: #ff8555; }
+        .empty { text-align: center; color: #666; padding: 60px 20px; }
+        .stats { 
+            background: #1a1a1a; border: 1px solid #333;
+            border-radius: 8px; padding: 15px; margin-bottom: 30px;
+            display: flex; gap: 30px; flex-wrap: wrap;
+        }
+        .stat { color: #888; }
+        .stat strong { color: #ff6b35; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🔥 Firelib Share</h1>
+        <p class="subtitle">Files shared on this network</p>
+        
+        <div class="stats" id="stats"></div>
+        <div class="files" id="files"></div>
+    </div>
+    
+    <script>
+        async function loadFiles() {
+            const res = await fetch('/api/files');
+            const data = await res.json();
+            
+            const statsDiv = document.getElementById('stats');
+            const filesDiv = document.getElementById('files');
+            
+            statsDiv.innerHTML = `
+                <div class="stat"><strong>${data.files.length}</strong> files shared</div>
+                <div class="stat"><strong>${data.total_size}</strong> total size</div>
+                <div class="stat">Server: <strong>${data.server}</strong></div>
+            `;
+            
+            if (data.files.length === 0) {
+                filesDiv.innerHTML = '<div class="empty">No files shared yet</div>';
+                return;
+            }
+            
+            filesDiv.innerHTML = data.files.map(file => `
+                <div class="file-card">
+                    <div class="file-name">📄 ${file.name}</div>
+                    <div class="file-info">
+                        Size: ${file.size} • Added: ${file.added}
+                    </div>
+                    <a href="/download/${encodeURIComponent(file.name)}" class="download-btn">
+                        ⬇️ Download
+                    </a>
+                </div>
+            `).join('');
+        }
+        
+        loadFiles();
+        setInterval(loadFiles, 5000);
+    </script>
+</body>
+</html>"""
+        self.send_response(200)
+        self.send_header('Content-Type', 'text/html')
+        self.end_headers()
+        self.wfile.write(html.encode())
+    
+    def serve_api_files(self):
+        """Serve files list as JSON"""
+        db = load_db()
+        total_size = sum(f['size_bytes'] for f in db['files'])
+        
+        response = {
+            'files': [{
+                'name': f['name'],
+                'size': format_size(f['size_bytes']),
+                'added': f['added']
+            } for f in db['files']],
+            'total_size': format_size(total_size),
+            'server': get_local_ip()
+        }
+        
+        self.send_response(200)
+        self.send_header('Content-Type', 'application/json')
+        self.end_headers()
+        self.wfile.write(json.dumps(response).encode())
+    
+    def serve_download(self, filename):
+        """Serve file download"""
+        if filename not in self.shared_files:
+            self.send_error(404)
+            return
+        
+        filepath = self.shared_files[filename]
+        if not os.path.exists(filepath):
+            self.send_error(404)
+            return
+        
+        try:
+            with open(filepath, 'rb') as f:
+                self.send_response(200)
+                self.send_header('Content-Type', 'application/octet-stream')
+                self.send_header('Content-Disposition', f'attachment; filename="{filename}"')
+                self.send_header('Content-Length', str(os.path.getsize(filepath)))
+                self.end_headers()
+                self.wfile.write(f.read())
+        except Exception as e:
+            self.send_error(500, str(e))
+    
+    def log_message(self, format, *args):
+        print(f"[*] {self.address_string()} - {format % args}")
+
+def add_file_to_db(filepath):
+    """Add file to shared database"""
+    db = load_db()
+    filename = os.path.basename(filepath)
+    size = os.path.getsize(filepath)
+    
+    # Remove if already exists
+    db['files'] = [f for f in db['files'] if f['name'] != filename]
+    
+    # Add new entry
+    db['files'].append({
+        'name': filename,
+        'path': filepath,
+        'size_bytes': size,
+        'added': datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+    })
+    
+    save_db(db)
+    return filename
+
 def main():
     parser = argparse.ArgumentParser(description='Share files over local network')
-    parser.add_argument('file', nargs='?', default='.', help='File or directory to share')
+    parser.add_argument('file', nargs='?', help='File to share')
     parser.add_argument('-p', '--port', type=int, default=8080, help='Port to serve on')
+    parser.add_argument('-l', '--list', action='store_true', help='List shared files')
     args = parser.parse_args()
+    
+    if args.list:
+        db = load_db()
+        print("Shared Files:")
+        for f in db['files']:
+            print(f"  - {f['name']} ({format_size(f['size_bytes'])})")
+        return
+    
+    if not args.file:
+        print("[!] Please specify a file to share")
+        print("Usage: fire-share <file>")
+        sys.exit(1)
     
     if not os.path.exists(args.file):
         print(f"[!] File not found: {args.file}")
         sys.exit(1)
     
+    if not os.path.isfile(args.file):
+        print(f"[!] Must be a file, not a directory")
+        sys.exit(1)
+    
     abs_path = os.path.abspath(args.file)
+    filename = add_file_to_db(abs_path)
+    
+    # Load all shared files
+    db = load_db()
+    ShareHandler.shared_files = {f['name']: f['path'] for f in db['files']}
+    
     local_ip = get_local_ip()
     
     print("=" * 50)
     print("Firelib File Share")
     print("=" * 50)
-    print(f"[*] Sharing: {abs_path}")
+    print(f"[+] Added: {filename}")
     print(f"[*] Local:   http://localhost:{args.port}")
     print(f"[*] Network: http://{local_ip}:{args.port}")
     print("[*] Press Ctrl+C to stop")
     print("=" * 50)
     
-    os.chdir(os.path.dirname(abs_path) if os.path.isfile(abs_path) else abs_path)
+    server = HTTPServer(("0.0.0.0", args.port), ShareHandler)
     
-    with socketserver.TCPServer(("", args.port), http.server.SimpleHTTPRequestHandler) as httpd:
-        try:
-            httpd.serve_forever()
-        except KeyboardInterrupt:
-            print("\n[*] Sharing stopped")
+    try:
+        server.serve_forever()
+    except KeyboardInterrupt:
+        print("\n[*] Sharing stopped")
 
 if __name__ == '__main__':
     main()
